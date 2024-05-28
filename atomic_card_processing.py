@@ -27,15 +27,14 @@ def save_card_df_to_json(card_df, save_file_name):
 
 def save_card_df_to_json_utf(card_df, save_file_name):
     card_df_as_json = card_df.to_json(orient="index", force_ascii=False)
-    json_data = json.loads(card_df_as_json)
 
     try:
         os.makedirs(os.path.dirname(save_file_name), exist_ok=True)
         with open(save_file_name + '.json', 'w', encoding='utf-8') as f:
-            json.dump(json_data, f, ensure_ascii=False, indent=4)
+            json.dump(card_df_as_json, f, ensure_ascii=False, indent=4)
     except: # when it accepts not a dirname
         with open(save_file_name + '.json', 'w', encoding='utf-8') as f:
-            json.dump(json_data, f, ensure_ascii=False, indent=4)
+            json.dump(card_df_as_json, f, ensure_ascii=False, indent=4)
 
 
 def merge_and_save(csv_title, error_mask=None, start_ind=None):

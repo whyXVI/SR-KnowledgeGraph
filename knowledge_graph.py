@@ -671,13 +671,13 @@ class KnowledgeGraph:
 
         if verbose:
             print('Updating all node embeddings:')
-        start_time = time.time()
+            start_time = time.time()
         for _ind, (node_title, sum_of_sigs) in enumerate(node_titles_and_sum_of_sigs):
             if verbose:
                 if _ind % 200 == 0 or time.time() - prev_time > 1.0:
                     print('   Node number: ', _ind, ', Title: "{}" at time '.format(node_title),  
                           np.round(time.time() - start_time,2))
-            prev_time = time.time()
+                prev_time = time.time()
 
             node = self.nodes[node_title]
 

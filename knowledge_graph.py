@@ -744,7 +744,19 @@ class KnowledgeGraph:
         # Update all cards 
         for card in self.cards.values():
             card.update_embedding_vector(self)
-    
+
+    def save_final_embedding(self):
+        emb_dict = {node.title : node.embedding_vector for _, node in self.nodes.items()}
+        with open('emb_dict.json', 'w') as f:
+            json.dump(emb_dict, f, indent=4)
+
+
+    def update_all_retention(self,
+                             retention_diffusion_distance=2,# >=0. How far the retention change affects.
+                             diffuse_strength = 0.3
+                             ):
+
+
     def get_node_titles_and_sum_of_significances_to_node_decreasing_order(self):
         node_titles_and_sum_of_significances_to_node = [(node.title, node.sum_of_significances_to_node) for node in self.nodes.values()]    
         sum_of_significances_to_node = [node.sum_of_significances_to_node for node in self.nodes.values()]    

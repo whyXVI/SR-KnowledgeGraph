@@ -753,8 +753,7 @@ class KnowledgeGraph:
 
     def update_all_retention(self,
                              retention_diffusion_distance=2,# >=0. How far the retention change affects.
-                             diffuse_strength = 0.3
-                             ):
+                             diffuse_strength = 0.3):
 
 
     def get_node_titles_and_sum_of_significances_to_node_decreasing_order(self):

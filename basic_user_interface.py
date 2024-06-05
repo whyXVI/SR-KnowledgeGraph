@@ -16,7 +16,7 @@ from tkinter import ttk
 from basic_utils import *
 from knowledge_graph import *
 from knowledge_graph_querying import *
-from initial_card_processing import *
+from atomic_card_processing import *
 
 # Load your API key from an environment variable or secret management service
 openai.api_key = os.getenv("OPENAI_API_KEY")

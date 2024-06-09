@@ -1,4 +1,6 @@
 import os
+from math import sqrt
+
 import openai
 import re
 import json
@@ -8,7 +10,7 @@ from collections import Counter
 from typing import Any, Optional, Tuple, Dict, List, NamedTuple, Set
 import scipy
 import time
-
+from datetime import datetime
 from pprint import pprint as pprint
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -271,12 +273,19 @@ class CardConceptHierarchy:
         return "{" + ', '.join(_list) + "}"
 
 
+def update_ef(ef, normalized_q):
+    ef = ef + (0.1 - 5 * (1 - normalized_q) * (0.08 + (1 - normalized_q) * 0.1))  # -0.5,1.4,-0.8
+    if ef < 1.3:
+        ef = 1.3
+    return ef
+
+
 class Card:
     """
     Each card is a question answer pair. 
     """
 
-    def __init__(self, cardID, topic, question, answer, key_ideas, cardConceptHierarchy):
+    def __init__(self, cardID, topic, question, answer, key_ideas, cardConceptHierarchy, retention_history):
         self.cardID = cardID  # a unique integer given to each card 
         self.topic: str = topic  # effectively the label of the card
         self.question: str = question
@@ -285,13 +294,13 @@ class Card:
         self.concepts: CardConceptHierarchy = cardConceptHierarchy
         # self.retention: float = 0.0  # a number from 0 to 1 giving the estimated correctness if asked now
         # self.history: List[[float, float]] = []  # list of past times, and accuracy at that time, of testing
-        self.retention: float = 0.0
-        self.history: List[List[int, float]] = []
         # record the Unix timestamps and accuracy at that time. We may want to edit it, so use list instead of tuple
 
         self.embedding_vector: Dict[str: float] = {}
         self.embedding_vector_trimmed: Dict[
                                        str: float] = {}  # trimmed to not be as long of a dictionary if values are tiny
+
+        self.retention_history: Dict[str: float] = retention_history
 
     def get_abstraction_from_1_to_2(self, concept1, concept2):
         abstractions_dict = self.concepts.get_abstractions_dict()
@@ -327,6 +336,100 @@ class Card:
         self.embedding_vector_trimmed = trim_embedding_vector(card_emb_vec)
 
         return card_emb_vec
+
+    def return_days(self):
+        """
+        update EF and return next scheduled according to the perceived and calculated intervals(according to retention)
+        We don't automatically update a new attribute of card because we want it to be more controllable
+        # TODO it's really shitty
+        based on SM-2. need enhancements. SM-2 doesn't predict the probability someone recalls a fact explicitly
+        In our application, some QA are extremely eazy and basic. People won't forget them as they
+        are the fundamental concepts for further exploration. One-time learning
+        """
+
+        def get_estimated_revision_interval_list_ef():
+            list_retention = list(self.retention_history.values())
+            EF = list_retention.pop(0)
+            estimated_revision_interval = []
+
+            if list_retention:
+                I = 1
+                for normalized_memory_score in list_retention:
+                    EF = update_ef(EF, normalized_memory_score)
+                    estimated_revision_interval.append(I * EF)
+
+            return estimated_revision_interval  # 2.6 2.6*2.7 (suppose full retention)
+
+        def get_next_i_based_on_estimated_and_real_intervals(I_est, I_rel, EF):
+            """
+            This function utilizes the interval (est,rel) and the EF to generate next scheduled revision days
+            # TODO to be finished
+            """
+
+            def judge_total_mastery(I_est, I_rel, EF):
+                """ # TODO  this simply judges 2 times full retention
+                Perhaps directly mutate the ef instead of adding a process is better?
+                We will give penalty to some tagged cards? How can we distinguish the really basic and easy ones?
+                FSRS 是全世界最精确的间隔重复算法之一（最新基准测试更新） - 叶峻峣的文章 - 知乎
+                https://zhuanlan.zhihu.com/p/692314506
+                A fact: actual interval always >= predicted interval
+                """
+                if len(I_est) >= 2:
+                    if (I_est[1] / I_est[0]) > 2.69:
+                        return True
+                else:
+                    return False
+
+            if judge_total_mastery(I_est, I_rel, EF):
+                return 9999
+            else:
+                return sqrt(I_rel[-1] * I_est[
+                    -1]) * EF  # TODO this only longs the interval and does not consider longTimeBadRetention
+
+        lastkey_iter = reversed(self.retention_history.keys())  # Assume dict in order
+        lastkey = next(lastkey_iter)
+        EF = self.retention_history['EF']
+        I = 1
+
+        if lastkey != 'EF':  # have revision record
+            current_timestamp_interval = [int(datetime.now().timestamp()) - int(lastkey)]
+            other_timestamp_interval = []
+            a = next(lastkey_iter)
+            aft_lastkey_iter = reversed(self.retention_history.keys())
+            while a != 'EF':
+                try:
+                    other_timestamp_interval.append(int(next(aft_lastkey_iter)) - int(a))
+                    a = next(lastkey_iter)
+                except:
+                    break
+
+            I_estimated = get_estimated_revision_interval_list_ef()  # length = revision_times, exclude default interval
+            I_actual_revision_interval = list(reversed(other_timestamp_interval)) + current_timestamp_interval
+            assert len(I_estimated)==len(I_actual_revision_interval)
+
+            for ind, i in enumerate(I_estimated):  # timestamp
+                I_estimated[ind] = i / 86400
+                I_actual_revision_interval[ind] = i / 86400
+
+            I = get_next_i_based_on_estimated_and_real_intervals(I_estimated, I_actual_revision_interval, EF)
+            return I
+
+        return I
+
+    def update_EF(self):  #update card EF according to the latest revision record
+        EF = self.retention_history['EF']
+        self.retention_history['EF'] = update_ef(EF, next(reversed(self.retention_history.values())))
+        return None
+
+    def get_mastery_contribution_single_card(self):
+        """
+        returns a float 0-1 representing the mastery of the card
+        In DSR theory, this equals to Retrievability
+        """
+        a = self.retention_history['EF']
+        a = 50 * (a ** 2) - 138 * a + 89.64  # 1.3,0;1.4,0.6;1.6,1
+        a = 0 if a <= 0 else (1 if a >= 1 else a)
+        return a
 
 
 class Node:
@@ -368,7 +471,7 @@ class Node:
                                        str: float] = {}  # trimmed to not be as long of a dictionary if values are tiny
         self.sum_of_embeddings_to_node: float = 0.0  # sum of all other node embedding vectors values of this node
 
-        self.mastery: float = 0.0  # mastery of this concept. Since in my scene, cards are relatively simple and basic. Consider revision counts.
+        self.mastery: float = 0.0  # consider revision counts?
 
     def display_raw_metrics(self, num_connections_required_for_display=1):
         strength_bar_size_display = 20  # width in number of characters 
@@ -545,9 +648,6 @@ class Node:
 
         return self.raw_embedding_vector
 
-    def get_mastery(self):
-        pass
-
 
 class KnowledgeGraph:
     """
@@ -576,12 +676,13 @@ class KnowledgeGraph:
         # This reflects the Interval Multiplier. range: 0~10
         self.learner_question_relevance_penalty: float = 0.5
         # This attribute reflects how much the learner lean towards new challenges. range: 0~1. Higher, subsequent questions are less relevant.
-        # need not change in the revision process since cards are limited.
+        # fixed for a kg in the revision process since cards are limited.
 
-    def _add_card(self, topic, question, answer, key_ideas, cardConceptHierarchy):
+
+    def _add_card(self, topic, question, answer, key_ideas, cardConceptHierarchy, retention_history):
         # initialize card
         newCardID = 1 + max(list(self.cards.keys()) + [-1])  # get max value plus one 
-        card = Card(newCardID, topic, question, answer, key_ideas, cardConceptHierarchy)
+        card = Card(newCardID, topic, question, answer, key_ideas, cardConceptHierarchy, retention_history)
         self.cards[newCardID] = card
 
         self._update_node_parameters_when_adding_card(card)
@@ -685,10 +786,7 @@ class KnowledgeGraph:
 
         return node_titles_updated
 
-    def update_all_node_embeddings(self,
-                                   allow_reusing_existing_node_embedding=True,  # saves computation a ton
-                                   verbose=False,
-                                   ):
+    def update_all_node_embeddings(self, allow_reusing_existing_node_embedding=True, verbose=False, existing_ordered_node_emb=None):
         """
         Get embedding vectors from raw embeddings 
             This effectively measures and builds the network connectivity based on global structure
@@ -724,12 +822,15 @@ class KnowledgeGraph:
             sort_inds = np.argsort(list(ordering_dict.values()))
             sorted_neighbor_names = np.array(list(ordering_dict.keys()))[sort_inds]
 
-            # Initialize embedding vector 
-            if len(node.embedding_vector) > 0 and allow_reusing_existing_node_embedding:
-                new_emb_vec = node.raw_embedding_vector.copy()  # have to copy because we maybe introduced new elements 
+            # Initialize embedding vector
+            if existing_ordered_node_emb:  # space for time
+                new_emb_vec = list(existing_ordered_node_emb.values())[_ind]
+                self.nodes[node_title].embedding_vector_trimmed = trim_embedding_vector(new_emb_vec)
+            elif len(node.embedding_vector) > 0 and allow_reusing_existing_node_embedding:
+                new_emb_vec = node.raw_embedding_vector.copy()  # have to copy because we maybe introduced new elements
                 new_emb_vec.update(node.embedding_vector.copy())  # uses old embedding vector as default values
             else:
-                new_emb_vec = node.raw_embedding_vector.copy()  # to be filled 
+                new_emb_vec = node.raw_embedding_vector.copy()  # to be filled
             new_emb_vec_current_total = np.sum(list(new_emb_vec.values()))
             # Keep track of vector running sum rather than recalculating inner product (which is slow)
 
@@ -750,7 +851,7 @@ class KnowledgeGraph:
                     updated_value = overlap_reduced / (1.0 + n_node_raw_emb_sum_to_n_node)
                     # The denominator kills major concepts, since they're not very useful for embedding
 
-                    # Update parameters 
+                    # Update parameters
                     total_update_this_pass += np.abs(updated_value - new_emb_vec[n_node_title])
                     new_emb_vec_current_total += updated_value - new_emb_vec[n_node_title]
                     new_emb_vec[n_node_title] = updated_value
@@ -760,8 +861,8 @@ class KnowledgeGraph:
                         < update_fraction_condition_for_node_embedding_convergence):
                     break
 
-            node.embedding_vector = new_emb_vec
-            node.embedding_vector_trimmed = trim_embedding_vector(new_emb_vec)
+                node.embedding_vector = new_emb_vec
+                node.embedding_vector_trimmed = trim_embedding_vector(new_emb_vec)
 
         # Update the sum of embeddings to each node
         for node in self.nodes.values():
@@ -769,10 +870,7 @@ class KnowledgeGraph:
             for k, v in node.embedding_vector.items():
                 node.sum_of_embeddings_to_node += v
 
-    def update_all_embeddings(self,
-                              allow_reusing_existing_node_embedding=True,  # saves computation a ton
-                              verbose=False,
-                              ):
+    def update_all_embeddings(self, allow_reusing_existing_node_embedding=True, verbose=False, ):
 
         # Update all nodes
         self.update_all_node_embeddings(allow_reusing_existing_node_embedding=allow_reusing_existing_node_embedding,
@@ -782,9 +880,14 @@ class KnowledgeGraph:
         for card in self.cards.values():
             card.update_embedding_vector(self)
 
-    def save_final_embedding(self, isTrim=True):
-        emb_dict = {node.title: node.embedding_vector for _, node in self.nodes.items()}
-        emb_trimmed_dict = {node.title: node.embedding_vector_trimmed for _, node in self.nodes.items()}
+    def save_final_embedding_significances_decreasing(self, isTrim=True):
+
+        node_titles_and_sum_of_sigs = self.get_node_titles_and_sum_of_significances_to_node_decreasing_order()
+        emb_dict = {} if not isTrim else emb_trimmed_dict = {}
+        for _ind, (node_title, sum_of_sigs) in enumerate(node_titles_and_sum_of_sigs):
+            emb_dict[node_title] = self.nodes[node_title].embedding_vector if not isTrim \
+                else emb_trimmed_dict[node_title] = self.nodes[node_title].embedding_vector_trimmed
+
         if not isTrim:
             with open('emb_dict.json', 'w') as f:
                 json.dump(emb_dict, f, indent=4)
@@ -793,22 +896,37 @@ class KnowledgeGraph:
                 json.dump(emb_trimmed_dict, f, indent=4)
         return None
 
+    def update_and_get_mastery_for_node(self, nodetitle):
+
+        mastery = 0.0
+
+        for id in self.nodes[nodetitle].cards:
+            card = self.cards[id]
+            card_contribution = card.get_mastery_contribution_single_card()  # EF >=1.3 enhance 0.1 at most each time
+            mastery += card_contribution
+
+        self.nodes[nodetitle].mastery = mastery/len(self.nodes[nodetitle].cards)
+        return self.nodes[nodetitle].mastery
+
+
     def get_revision_queue(self,
                            retention_diffusion_distance=2,  # >=0. How far the retention change affects.
                            diffuse_strength=0.3):
-        revision_queue = []
-
+        revision_queue = []  # cardID
 
         return revision_queue
 
-
     def update_all_retention(self):
-        return None
-
-    def save_retention(self):
 
         return None
 
+    def read_retention_from_json(self):
+        retention = []
+        return retention
+
+    def save_retention_from_json(self):
+
+        return None
 
     def get_node_titles_and_sum_of_significances_to_node_decreasing_order(self):
         node_titles_and_sum_of_significances_to_node = [(node.title, node.sum_of_significances_to_node) for node in
@@ -911,6 +1029,7 @@ def create_card_deck_from_dataframe_of_abstraction_groups(cards_df_abstraction_g
         question = cards_df_abstraction_groups["Question"].values[card_ind]
         answer = cards_df_abstraction_groups["Answer"].values[card_ind]
         key_ideas = cards_df_abstraction_groups["Key ideas"].values[card_ind]
+        revision_history = cards_df_abstraction_groups["Revision_history"].values[card_ind]
 
         # construct card concept heirarchy
         cardConceptHierarchy = CardConceptHierarchy(topic, "")
@@ -924,6 +1043,6 @@ def create_card_deck_from_dataframe_of_abstraction_groups(cards_df_abstraction_g
             for concept in concept_list:
                 cardConceptHierarchy.set_concept(level, concept, "")
 
-        card_deck.append([topic, question, answer, key_ideas, cardConceptHierarchy])
+        card_deck.append([topic, question, answer, key_ideas, cardConceptHierarchy, revision_history])
 
     return card_deck

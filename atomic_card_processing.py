@@ -1,4 +1,6 @@
 import os
+from io import StringIO
+
 import openai
 import re
 import json
@@ -41,6 +43,7 @@ def merge_and_save(csv_title, error_mask=None, start_ind=None):
     """
     This function takes in atomic jsons, merge them if it exists and is not cancelled
     and saves it to a sorted json, reserving original indexes
+     #TODO add support for revision_history
     """
     dfs = []
     num_pat = re.compile(fr"{csv_title}_card_(\d+)\.json")
@@ -351,6 +354,14 @@ def get_and_save_cards_df(flashcardExamples_front,
         get_card_df_meta_data_from_text_description(df1, card_ind, verbose=verbose)
 
 
+def revision_history_initialization(name):  # if you already have a abstraction_groups.json without retention
+    cards_df = read_cards_df_from_json(name)
+    if cards_df.shape[1] == 4 and "Abstraction groups" in cards_df.columns:
+        cards_df["Revision_history"] = [{'EF': 2.5, } for _ in range(len(cards_df))]
+        save_card_df_to_json_utf(cards_df, save_file_name=name)
+    return None
+# revision_history_initialization("34567_full_cards_df_abstraction_groups")
+
 def get_card_df_abstraction_groups_from_meta_data(cards_df):
     """
     Converts meta data with weird names for abstraction levels into a common format
@@ -375,6 +386,10 @@ def get_card_df_abstraction_groups_from_meta_data(cards_df):
     abstraction_group_dict['2'] = cards_df["More general categories"].values[0]
     abstraction_group_dict['3'] = cards_df['Even more general categories'].values[0]
     abstraction_group_dict['4'] = cards_df['Most general category'].values[0]
+
+    # Add revision_history
+    if cards_df.shape[1] == 4 and "Abstraction groups" in cards_df.columns:
+        new_cards_df["Revision_history"] = [{'EF': 2.5, } for _ in range(len(new_cards_df))]
 
     return new_cards_df
 
